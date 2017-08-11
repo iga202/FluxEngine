@@ -18,10 +18,11 @@ from __future__ import print_function
 from netCDF4 import Dataset
 from glob import glob
 import numpy as np, sys, csv, argparse, calendar
+from numpy import zeros
 from math import sqrt, cos, sin, radians, log10
 from scipy.integrate import quad
 
-np.seterr(all = 'raise', invalid = 'ignore')
+np.seterr(all = 'raise', invalid = 'ignore', under='ignore')#SOCATv4 - added under='ignore'
 NaN = float('nan')
 
  # default directories
@@ -36,6 +37,8 @@ defaultCiName = 'OIC1'
 defaultCwName = 'OSFC' # NB mislabelled in the netCDF as atmospheric conc
 defaultIceName = 'P1'
 defaultLandName = 'land_proportion'
+defaultGridAreafile = 'no_file'
+defaultGridAreaName = 'area'
 baseTitles = ['YEAR', 'MONTH', 'NET FLUX TgC', 'MISSING FLUX TgC',
    '30.5 DAY FLUX TgC', 'GROSS DOWNWARD FLUX TgC',
    'MISSING GROSS DOWNWARD FLUX TgC', '30.5 DAY GROSS DOWNWARD FLUX TgC',
@@ -106,6 +109,12 @@ parser.add_argument('-lf', '--landfile', nargs='?', default=defaultLandfile,
    help='netCDF file containing global land proportion')
 parser.add_argument('-ld', '--landdataset', nargs='?', default=defaultLandName,
    help='netCDF global land dataset name')
+parser.add_argument('-ga', '--gridarea', type=int, nargs='?', default=0,
+   help='Grid area filename or value')
+parser.add_argument('-gaf', '--gridareafile', nargs='?', default=defaultGridAreafile,
+   help='netCDF file containing area of grid cells')
+parser.add_argument('-gad', '--gridareadataset', nargs='?', default=defaultGridAreaName,
+   help='netCDF grid area dataset name')
 parser.add_argument('-L', '--LooseIce', default=False,
    help='use Loose et al ice parameterization instead of Takahashi')
 parser.add_argument('-ip', '--icePercent', default=False,
@@ -127,6 +136,8 @@ maskfile, maskdatasets = args.maskfile, args.maskdatasets
 landfile, landdataset = args.landfile, args.landdataset
 regions, LooseIce, icePercent = args.regions, args.LooseIce, args.icePercent
 window, places, verbosity = args.window, args.places, args.verbosity
+gridArea, gridAreafile, gridAreaName = args.gridarea, args.gridareafile, args.gridareadataset
+
 referencing = refdir is not None
 windowing = window is not None
 if windowing and len(window) != 4:
@@ -321,21 +332,52 @@ for yearNo in xrange(nYears):
             try:
                mask_variable = mask_dataset.variables[maskdataset]
             except:
-               print('Unable to open ', maskdataset, ' dataset in ', maskfile)
-               sys.exit(1)
+               try:
+                  maskdataset = maskdataset.replace("_"," ")
+                  mask_variable = mask_dataset.variables[maskdataset]
+               except:
+                  print('Unable to open ', maskdataset, ' dataset in ', maskfile)
+                  sys.exit(1)
             checkShape((maskdataset, mask_variable))
             if 'masks' in locals():
                masks = np.ma.vstack((masks,
                   mask_variable[0, y0:y1, x0:x1].reshape(1, ny, nx)))
             else:
                masks = mask_variable[0, y0:y1, x0:x1].reshape(1, ny, nx)
+            # masks = np.fliplr(masks)Uncomment if using Europe200.nc mask or similar
          mask_dataset.close()
 
-          # calculate area of a 1x1 degree box at a given latitude
-         cellAreas = np.empty(ny)
-         cellAreas.fill(float('nan'))
-         for j in xrange(y0,y1):
-            cellAreas[j-y0] = quad(oneDegreeArea, 89. - j, 90. - j)[0]
+         #  # calculate area of a 1x1 degree box at a given latitude
+         # cellAreas = np.empty(ny)
+         # cellAreas.fill(float('nan'))
+         # for j in xrange(y0,y1):
+         #    cellAreas[j-y0] = quad(oneDegreeArea, 89. - j, 90. - j)[0]
+
+#IGA----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#gridArea, gridAreafile, gridAreaName
+         if gridArea == 0 and gridAreafile == 'no_file':
+            print('No grid areas given - assuming  a1deg x 1deg grid and calculating net flux accordingly.')
+            cellAreas = np.empty(ny)
+            cellAreas.fill(float('nan'))
+            for j in xrange(y0,y1):
+               cellAreas[j-y0] = quad(oneDegreeArea, 89. - j, 90. - j)[0]
+         elif gridAreafile != 'no_file':
+            print('Reading grid area from file', gridAreafile)
+            with Dataset(gridAreafile, 'r') as ncArea:
+               cellAreas = ncArea.variables[gridAreaName][:]
+            cellAreas = cellAreas[0,y0:y1, x0:x1]
+         elif gridArea != 0 and gridAreafile == 'no_file':
+            print('Reading grid area from integer input = ', gridArea)
+            cellAreas = np.empty(ny)
+            cellAreas.fill(float(gridArea))
+
+            # if len(gridAreadataset) == 1:#Wrong if argument
+            #    cellAreas = np.empty(ny)
+            #    cellAreas.fill(float(gridAreadataset))
+            # else:
+            #    with Dataset(gridAreadataset,'r') as ga_in:
+            #     cellAreas = ga_in['cell_area']
+#IGA-----------------------------------------------------------------------------
 
          if addedGlobal:
             yearlyGlobalFlux = np.array(0.) # to divide by zero without errors
@@ -427,10 +469,18 @@ for yearNo in xrange(nYears):
          sys.exit(1)
       checkShape((fluxdataset, variable))
       ice = variable[0, :, :]
+      
+      try:
+         iceMask = ice.mask[y0:y1, x0:x1]
+      except AttributeError:
+         ice = ice[:].view(np.ma.MaskedArray)
+         ice.mask = zeros(ice.shape)
+         iceMask = ice.mask[y0:y1, x0:x1]
+
       if icePercent:
          ice /= 100. # NB -999 now becomes -99.9, shouldn't matter though
-      iceMask = ice.mask[y0:y1, x0:x1]
       ice = ice[y0:y1, x0:x1]
+      iceMask[ice<0.]=True
       if referencing:
          try:
             refVariable = refVariables[icedataset]
@@ -497,11 +547,15 @@ for yearNo in xrange(nYears):
                f = 0.
             if verbosity > 1 and not (fluxMask[j, i] or np.isfinite(f)):
                print(month, year, i, j, 'flux', f)
+            if len(cellAreas.shape)>1:
+               tCellArea = cellAreas[j,i]
+            else:
+               tCellArea = cellAreas[j]#If the cellAreas are regular, they have only one dimension. Otherwise, they are x and y varying and picked accordingly
             if iceMask[j, i]:
                iceCover = 0.
             else:
                iceCover = ice[j, i]
-            if not (fluxMask[j, i] or np.isfinite(iceCover)):
+            if verbosity > 1 and not (fluxMask[j, i] or np.isfinite(iceCover)):
                print(month, year, i, j, 'ice', iceCover)
             if not (fluxMask[j, i]) and (iceCover < 0. or iceCover > 1.):
                print(month, year, i, j, 'ice', iceCover)
@@ -512,17 +566,22 @@ for yearNo in xrange(nYears):
                icefreeArea = max([1. - iceCover, .1]) # Takahashi icefreeArea>=.1
                if LooseIce:
                   icefreeArea = pow(icefreeArea, .4)
-               icefreeArea *= cellAreas[j]
+               icefreeArea *= tCellArea
             else: # this includes missing values, which are -999
-               icefreeArea = cellAreas[j]
+               icefreeArea = tCellArea
             try:
                ag = icefreeArea * ocean[j, i]
             except ArithmeticError:
                print(month, year, i, j, 'ag overflow', iceCover, icefreeArea, ocean[j, i])
             if nRegions != 0:
                mask = masks[:, j, i]
-               regionNos = np.arange(nRegions)[
-                  np.logical_and(~mask.mask, mask > 0.)]
+               try:
+                  regionNos = np.arange(nRegions)[
+                      np.logical_and(~mask.mask, mask > 0.)]
+               except:#IGA_netfluxBugTestJun2017
+                  mask = np.ma.MaskedArray(mask)
+                  regionNos = np.arange(nRegions)[
+                      np.logical_and(~mask.mask, mask > 0.)]
             else:
                regionNos = []
             if not (fluxMask[j, i]):
@@ -753,6 +812,7 @@ for yearNo in xrange(nYears):
             refUpFluxes[regionNo], refMissingUpFluxes[regionNo],
             refStandardUpFluxes[regionNo]],
             refExtras[:, regionNo]).astype(mytype)))
+         print('Region number and area',regionNo, areas[regionNo])
    if addedGlobal:
       yearlyGlobalFlux *= unitConversion
       yearlyGlobalDownFlux *= unitConversion
