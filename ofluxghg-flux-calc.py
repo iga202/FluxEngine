@@ -15,6 +15,13 @@
 # v5 06/08/2014 version used for final runs and FluxEngine publication
 #Further changes marked by #IGA within the text. Version control within a GIT repo
 
+# ToDo (wishList)
+# Add uncertainty values as an option through configuration file
+# Incorporate rain noise through configuration file
+# Pressure units often vary - account for this through config?
+# Line 1736 (re.match) returns an error if pco2_prod is 'pco2'
+# 
+
  # netcdf bits
 from netCDF4 import Dataset
 import os, sys
@@ -22,19 +29,17 @@ import os, sys
 import re # regular expression matching
 from math import log, exp, sqrt, pow, isnan
 import cerform.flux.coare3
+import coareg
  # numpy import
 #from numpy import *
-from numpy import size, flipud, mean, zeros, nonzero, array, resize, ma, ravel, arange, float64, dtype, transpose, reshape, ones, meshgrid, median, savetxt, pad
+from numpy import size, flipud, mean, zeros, nonzero, array, resize, ma, ravel, arange, float64, dtype, transpose, reshape, ones, meshgrid, median, savetxt, pad, empty
 from random import seed, normalvariate
 
  # debug mode switches
 DEBUG = False
-DEBUG_PRODUCTS = False
+DEBUG_PRODUCTS = True
 TAKAHASHI_DRIVER = False # enables Takahashi data to drive code - used for verifying calculations
 VERIFICATION_RUNS = False # forces flux calculations to use Takahashi SST_t as the SST dataset for the pco2 data
-GAS = 'CO2'#IGA when using other gases, this can be used to turn off corrections and changes - vCO2 air is assumed to be the atmospheric concentrations and is not adjusted. No icrements are added as they are with CO2. - Short term solution - long term solution requires complete treatement of other gases
-ATMGAS = 'V'#IGA - added for datasets that provide pco2 in air rather than vco2 in air. If vco2, change to ATMGAS = 'V'
-print 'Calculations proceeding for ',GAS,' gas and using values in air as ',ATMGAS.lower(),GAS
 
  # missing value set for intermediate data sets and output dataset
 missing_value = -999.0
@@ -237,7 +242,7 @@ def write_netcdf(FH06_fdata, FKo07_fdata, k_fdata, kt_fdata, kd_fdata, kb_fdata,
 
        lons2.valid_min = -180.0
        lons2.valid_max = 180.0
-   else:#IGA if the input lat/long was a grid, write output only as a grid.
+   else:# if the input lat/long was a grid, write output only as a grid.
        lats = ncfile.createVariable('latitude',dtype('float64').char,dims)
        lons = ncfile.createVariable('longitude',dtype('float64').char,dims)
         # Assign units attributes to coordinate var data. This attaches a
@@ -1031,7 +1036,7 @@ def add_noise(data, rmse_value, mean_value, no_elements):
       orig = data[i]
       value = log(data[i])
       stddev = float(rmse_value/orig)
-      noise = normalvariate(0,stddev) # determines the random noise value based on the rain input data and the standard deviation of the uncertainty
+      noise = normalvariate(0,stddev) # determines the random noise value based on the input data and the standard deviation of the uncertainty
       value = value + noise
       data[i] = exp(value)
   return data
@@ -1249,7 +1254,6 @@ def flip_data(data, this_variable):
     '''#IGA - for a netcdf data set, determine whether latitude orientation matches 'taka' and if not, flip the variable provided using flipud'''
     data_latitude_prod = [str(x) for x in data.variables.keys() if 'lat' in str(x).lower()] #finds the correct latitude name for data
     data_lat = data.variables[data_latitude_prod[0]]
-
     if len(data_lat.shape)<2 and data_lat[0]<0:#IGA - if true, it is a vector that is in opposite orientation to 'taka'
        flipped = True
        this_variable_out = flipud(this_variable)
@@ -1351,7 +1355,13 @@ process_layers_off = int(sys.argv[79])
 config_file = sys.argv[80]
 hostname = sys.argv[81]
 processing_time = sys.argv[82]
-
+try:
+  GAS = sys.argv[83]
+  ATMGAS = sys.argv[84]
+except:
+  GAS = 'CO2'#IGA when using other gases, this can be used to turn off corrections and changes - vCO2 air is assumed to be the atmospheric concentrations and is not adjusted. No icrements are added as they are with CO2. - Short term solution - long term solution requires complete treatement of other gases
+  ATMGAS = 'V'#IGA - added for datasets that provide pco2 in air rather than vco2 in air. If vco2, change to ATMGAS = 'V'
+print 'Calculations proceeding for ',GAS,' gas and using values in air as ',ATMGAS.lower(),GAS
 
 if DEBUG:
    print "\n%s Flux model: %d, k_parmaterisation: %d" % (function, flux_model, k_parameterisation)
@@ -1539,8 +1549,7 @@ if TAKAHASHI_DRIVER:
 else:
    latitude_prod = 'lat'
    longitude_prod = 'lon'
-
-
+   pressure_prod ='msl_mean'
 
  # open sstskin dataset   
 with Dataset(sstskin_infile,'r') as data:
@@ -1550,8 +1559,11 @@ with Dataset(sstskin_infile,'r') as data:
     sstskinK = data.variables[sstskin_prod]
     sstskinK_n, sstskinK_ny, sstskinK_nx = sstskinK.shape
     if DEBUG:
-       print "\nsstskin data dimentions: %d %d %d" % (sstskinK_n, sstskinK_nx, sstskinK_ny)
+       print "\nsstskin data dimensions: %d %d %d" % (sstskinK_n, sstskinK_nx, sstskinK_ny)
     sstskinK_data = sstskinK[0,:,:]
+    if mean(sstskinK_data)<200:#IGA-added if to check whether data are celsius or Kelvin
+      sstskinK_data =  sstskinK_data+273.15
+      print('SSTskin changed to Kelvin')
     
     sstskinK_data,flipped = flip_data(data,sstskinK_data)#If necessary - data will be flipped using flipud
     
@@ -1580,6 +1592,8 @@ with Dataset(sstskin_infile,'r') as data:
     except:
      print "\n%s data variable '%s' or '%s' or '%s' is/are missing from sstskin-netcdf input (%s)" % (function, sstskin_prod, 'Std_dev', 'count', sstskin_infile)
     sys.exit(1)
+
+
 
    try:
       latitude_data = data.variables[latitude_prod][:]
@@ -1613,7 +1627,7 @@ with Dataset(salinity_infile,'r') as data:
    except:
       print "\n%s data variable '%s' missing from sal-netcdf input (%s)" % (function, salinity_prod, salinity_infile)
       sys.exit(1)
-
+print "pCO2 selection is: ",pco2_data_selection
  # open pco2 dataset
 with Dataset(pco2_infile,'r') as data:
    try:
@@ -1632,42 +1646,49 @@ with Dataset(pco2_infile,'r') as data:
             if salinity_data_selection != 0: # Not takahashi data array so it will need flipping 
                 vco2_air_data = flipud(vco2_air_data)
                 flipped = True
+            print "\n%s data variable %s missing from pco2-netcdf (%s), USED salinity-netcdf input INSTEAD...(%s)" % (function, vco2_prod, pco2_infile, salinity_infile)
       except:
           print "\n%s data variable %s missing from pco2-netcdf (%s) and salinity-netcdf input (%s)" % (function, vco2_prod, pco2_infile, salinity_infile)
           sys.exit(1)
 
-   try:
-      pco2_sw = data.variables[pco2_prod]
-      pco2_sw_data = pco2_sw[0,:,:]
-       # stddev information only exists for SOCAT data
-      #print "\n\npco2_data_selection %s (%s)\n\n" % (pco2_data_selection, pco2_prod) 
-      if pco2_data_selection == 2:
-         m = re.match(r"(\w+\d?\_)\w+$", pco2_prod)
-         try: 
-             pco2_sw_stddev_prod = m.group(0) + '_std'
-             pco2_sw_stddev_data = data.variables[pco2_sw_stddev_prod][0,:,:]
-         except(KeyError): 
-             pco2_sw_stddev_prod = m.group(1) + 'std'#IGA changed m.group(1) to m.group(0) as _mean not always present in these in-situ data
-             pco2_sw_stddev_data = data.variables[pco2_sw_stddev_prod][0,:,:]
+   #try:
+   pco2_sw = data.variables[pco2_prod]
+   pco2_sw_data = pco2_sw[0,:,:]
+    # stddev information only exists for SOCAT data
+   #print "\n\npco2_data_selection %s (%s)\n\n" % (pco2_data_selection, pco2_prod) 
+   if pco2_data_selection == 1 or pco2_data_selection == 2 or pco2_data_selection == 4 or pco2_data_selection == 45:
+      m = re.match(r"(\w+\d?\_)\w+$", pco2_prod)
+      try: 
+          pco2_sw_stddev_prod = m.group(0) + '_std'
+          pco2_sw_stddev_data = data.variables[pco2_sw_stddev_prod][0,:,:]
+      except(KeyError): 
+          pco2_sw_stddev_prod = m.group(1) + 'std'#IGA changed m.group(1) to m.group(0) as _mean not always present in these in-situ data
+          #pco2_sw_stddev_data = data.variables[pco2_sw_stddev_prod][0,:,:]#IGA_SOCATv4 - commented out
+          pco2_sw_stddev_data = empty([180,360])+missing_value#IGA_SOCATv4 - if the std doesn't exist, just make an empty array
 
-         if flipped:       
-            pco2_sw_stddev_data = flipud(pco2_sw_stddev_data)
-            pco2_sw_data = flipud(pco2_sw_data)
-      if TAKAHASHI_DRIVER:
-         pco2_air = data.variables['pCO2_air']
-         pco2_air_data = pco2_air[0,:,:]
-   except:
-      print "\n%s data variable %s or _std variant, %s missing from pco2-netcdf input (%s) (pco2_data_selection %s)" % (function, pco2_prod, pco2_sw_stddev_prod, pco2_infile, pco2_data_selection)
-      sys.exit(1)
+      pco2_sw_data,flipped = flip_data(data,pco2_sw_data)#SOCATv4
+      if flipped:       
+         print 'pco2_sw_data was flipped'#IGA_SOCATv4
+         pco2_sw_stddev_data = flipud(pco2_sw_stddev_data)
+      
+   if TAKAHASHI_DRIVER:
+      pco2_air = data.variables['pCO2_air']
+      pco2_air_data = pco2_air[0,:,:]
+   #except:
+    #  print "\n%s data variable %s or _std variant, %s missing from pco2-netcdf input (%s) (pco2_data_selection %s)" % (function, pco2_prod, pco2_sw_stddev_prod, pco2_infile, pco2_data_selection)
+     # sys.exit(1)
 
    try:
       sstpco2 = data.variables[pco2_sst_prod]
       sstpco2_data = sstpco2[0,:,:]
       if flipped:
          sstpco2_data = flipud(sstpco2_data)
+      no_sstpco2_data = False#IGA_SOCATv4
    except:
       print "\n%s data variable %s missing from pco2-netcdf input (%s)" % (function, pco2_sst_prod, pco2_infile)
-      sys.exit(1)
+      sstpco2_data = empty([180,360])+missing_value#IGA_SOCAT_v4
+      no_sstpco2_data = True#IGA_SOCATv4
+      #sys.exit(1)
 
  # loading XCO2 from 2000 for use with SOCAT data
  # assuming salinity file is Takahashi salinity
@@ -1806,7 +1827,10 @@ if use_sstfnd == 1:
           # passing sstfnd_prod from command line
          sstfndK = data.variables[sstfnd_prod]
          sstfndK_n, sstfndK_ny, sstfndK_nx = sstfndK.shape
-         sstfndK_data =  sstfndK[0,:,:]+273.15
+         sstfndK_data =  sstfndK[0,:,:]
+         if mean(sstfndK_data)<200:#IGA-added if to check whether data are celsius or Kelvin #change
+           sstfndK_data =  sstfndK_data+273.15
+           print('SSTfnd changed to Kelvin')
 
          sstfndK_data,flipped = flip_data(data,sstfndK_data)#If necessary - data will be flipped using flipud
          try:
@@ -1831,7 +1855,7 @@ if use_sstfnd == 1:
 
  # open windu10 dataset 
 with Dataset(windu10_infile,'r') as data:
-   try:
+   #try:
       windu10 = data.variables[windu10_prod]   
       windu10_n, windu10_ny, windu10_nx = windu10.shape
       windu10_data = windu10[0,:,:]
@@ -1845,19 +1869,28 @@ with Dataset(windu10_infile,'r') as data:
        # so need to load '_coun't and '_stddev' fields as well which are assumed to exist
       if TAKAHASHI_DRIVER != True:
          m = re.match(r"(\w+\_)\w+", windu10_prod)
-         windu10_stddev_prod = m.group(1) + 'stddev'
-         windu10_stddev_data = data.variables[windu10_stddev_prod][0,:,:]
-         windu10_count_prod = m.group(1) + 'count'
-         windu10_count_data = data.variables[windu10_count_prod][0,:,:]
+         try:
+           windu10_stddev_prod = m.group(1) + 'stddev'
+           windu10_stddev_data = data.variables[windu10_stddev_prod][0,:,:]
+         except:
+           windu10_stddev_data = array([missing_value] * windu10_nx*windu10_ny)
+         try:
+           windu10_count_prod = m.group(1) + 'count'
+           windu10_count_data = data.variables[windu10_count_prod][0,:,:]
+         except:
+           windu10_count_data = array([missing_value] * windu10_nx*windu10_ny)
 
           # loading the second and third order wind moments
          windu10_moment2_prod = m.group(1) + 'moment_2'
          windu10_moment2_data = data.variables[windu10_moment2_prod][0,:,:]
          windu10_moment2_fill_value = data.variables[windu10_moment2_prod]._FillValue
-      
-         windu10_moment3_prod = m.group(1) + 'moment_3'
-         windu10_moment3_data = data.variables[windu10_moment3_prod][0,:,:]
-         windu10_moment3_fill_value = data.variables[windu10_moment3_prod]._FillValue
+         try:
+           windu10_moment3_prod = m.group(1) + 'moment_3'
+           windu10_moment3_data = data.variables[windu10_moment3_prod][0,:,:]
+           windu10_moment3_fill_value = data.variables[windu10_moment3_prod]._FillValue
+         except:
+           windu10_moment3_data = array([missing_value] * windu10_nx*windu10_ny)
+           windu10_moment3_fill_value = missing_value
          if flipped: 
            windu10_stddev_data = flipud(windu10_stddev_data)
            windu10_count_data = flipud(windu10_count_data)
@@ -1872,9 +1905,9 @@ with Dataset(windu10_infile,'r') as data:
          windu10_moment2_fill_value = missing_value
      
      
-   except:
-      print "\n%s data variable '%s' or '%s' or '%s' or '%s' or '%s' is/are missing from windu10-netcdf input (%s)" % (function, windu10_prod, windu10_stddev_prod, windu10_count_prod, windu10_moment2_prod, windu10_moment3_prod, windu10_infile)
-      sys.exit(1)
+   #except:
+      #print "\n%s data variable '%s' or '%s' or '%s' or '%s' or '%s' is/are missing from windu10-netcdf input (%s)" % (function, windu10_prod, windu10_stddev_prod, windu10_count_prod, windu10_moment2_prod, windu10_moment3_prod, windu10_infile)
+      #sys.exit(1)
  
 
  # open sigma0 dataset 
@@ -1923,7 +1956,7 @@ with Dataset(sig_wv_ht_infile,'r') as data:
    except:
       print "\n%s data variable '%s' or '%s' or '%s' is/are missing from sig_wv_ht-netcdf input (%s)" % (function, sig_wv_ht_prod, sig_wv_ht_stddev_prod, sig_wv_ht_count_prod, sig_wv_ht_infile)
       sys.exit(1)
-
+print rain_data_selection
  # open rain dataset
 rain_missing_value = -999.0
 with Dataset(rain_infile,'r') as data:
@@ -1972,7 +2005,7 @@ with Dataset(ice_infile,'r') as data:
       except: #IGA Update - supports CERSAT ice data which does not have a time dimension
         ice_ny, ice_nx = ice.shape
         ice_data = ice[:].view(ma.MaskedArray)
-        ice_data[ice_data<0]=ma.masked#CERSAT uses -1 for missing value. As it is a fraction/percentage, negative numbers will always be missing values
+        ice_data[ice_data<0]=missing_value#CERSAT uses -1 for missing value. As it is a fraction/percentage, negative numbers will always be missing values
       ice_data,flipped = flip_data(data,ice_data)#If necessary - data will be flipped using flipud
       try:
           ice_fill_value = ice._FillValue
@@ -2004,7 +2037,12 @@ elif (pco2_data_selection == 2): # signifies that SOCAT fco2 data are being used
     # so assuming -1.5uatm for each year prior to 2010
    pco2_increment = (year - 2010.0) * 1.5
    print "%s year: %d SOCAT fCO2_increment: %lf (uatm) (pco2_data_selection: %d)" % (function, year, pco2_increment,pco2_data_selection)
-elif (pco2_data_selection == 3): # signifies that in situ data are being used
+elif (pco2_data_selection == 4): # signifies that in situ or time-series data are being used - no increment
+   pco2_increment = 0.0
+elif (pco2_data_selection == 45): # signifies that SOCATv4 climatology is being used - increments apply
+   pco2_increment = (year - 2010.0) * 1.5
+   print "%s year: %d SOCATv4 climatology fCO2_increment: %lf (uatm) (pco2_data_selection: %d)" % (function, year, pco2_increment,pco2_data_selection)
+elif (pco2_data_selection == 3): # signifies that in situ or time-series data are being used - no increment
    pco2_increment = 0.0
    print "%s year: %d insitu fCO2_increment: %lf (uatm) (pco2_data_selection: %d)" % (function, year, pco2_increment,pco2_data_selection)
 else:
@@ -2055,6 +2093,7 @@ elif ( (sst_gradients == 1 and use_sstfnd == 0) or (sst_gradients == 0 and use_s
 else:
    print "\n%s sst_gradients (%d) and use_sstfnd (%d) combination in configuration not recognised, exitiing." % (function, sst_gradients, use_sstfnd)
    sys.exit(1)
+
    
 windu10_fdata = ravel(windu10_data)
 windu10_count_fdata = ravel(windu10_count_data)
@@ -2089,7 +2128,26 @@ ice_fdata = ravel(ice_data)
 
 vco2_air_fdata = ravel(vco2_air_data)
 pres_fdata = ravel(pres_data)
-sstpco2_fdata = ravel(sstpco2_data)
+
+#SOCATv4 - using input foundation temperature as the SST temp-------------START
+if no_sstpco2_data == True:#SOCATv4
+  if use_sstfnd == 1:
+    # using actual sstfnd
+    sstpco2_fdata = sstfndK_fdata-273.15
+    print 'sstpco2 data not available and has been set to sstfndK'#SOCATv4
+  elif ( (sst_gradients == 1 and use_sstfnd == 0) or (sst_gradients == 0 and use_sstfnd == 0) ): # initialising as needed later to be filled with sstskin +0.14
+    with Dataset(sstfnd_infile,'r') as data:
+     # passing sstfnd_prod from command line
+     print data.variables.keys()
+     sstfndK = data.variables['sea_surface_temperature_mean']
+     sstfndK_n, sstfndK_ny, sstfndK_nx = sstfndK.shape
+     sstfndK_data =  sstfndK[0,:,:]
+    sstpco2_fdata = ravel(sstfndK_data)-273.15
+    print 'sstpco2 data not available and has been set to SSTfnd input'#SOCATv4
+else:
+  sstpco2_fdata = ravel(sstpco2_data)
+#SOCATv4 - using input foundation temperature as the SST temp------------END
+#original: sstpco2_fdata = ravel(sstpco2_data)
 
  # process layers
  # bio data is always needed
@@ -2104,8 +2162,11 @@ if process_layers_off == 0:
    longhurst_fdata = ravel(longhurst_data)
    sstgrad_fdata_avg = ravel(sstgrad_data_avg)
 
+
  # some specific pco2 conditions
 pco2_sw_fdata = ravel(pco2_sw_data)
+pco2_sw_fdata[abs(pco2_sw_fdata)<0.1]=missing_value#IGA_SOCATv4
+
 if (pco2_data_selection == 1):
     # signifies that we're using SOCAT data 
     pco2_sw_stddev_fdata = ravel(pco2_sw_stddev_data)
@@ -2240,12 +2301,13 @@ elif sst_gradients == 1 and use_sstskin == 1 and use_sstfnd == 0:
          sstfndK_count_fdata[i] = sstskinK_count_fdata[i]
       else:
          sstfndK_fdata[i] = missing_value
+elif sst_gradients == 0 and use_sstskin == 1 and use_sstfnd == 1:
+   print "%s SST gradient handling is off, using SSTfnd and SSTskin from the configuration file." % (function)        
 elif sst_gradients == 1 and use_sstskin == 1 and use_sstfnd == 1:
    print "%s SST gradient handling is on, using SSTfnd and SSTskin from the configuration file." % (function)
 else:
    print "\n%s sst_gradients (%d), use_sstskin (%d) and use_sstfnd (%d) combination in configuration not recognised, exitiing." % (function, sst_gradients, use_sstskin, use_sstfnd)
    sys.exit(1)
-
 
  # quality filtering and conversion of SST datasets
 if TAKAHASHI_DRIVER != True:
@@ -2297,8 +2359,9 @@ if (random_noise_sstfnd == 1):
 
 if (random_noise_pco2 == 1):
    print "/n%s Shape of pco2 data",pco2_sw_fdata.shape
-   add_noise(pco2_sw_fdata, 2.0, 0.0, nx*ny)
-   print "%s Adding random noise to pco2/fco2 data (mean 0.0, stddev 2.0 uatm - assuming using SOCAT flag A and flag B data)" % (function)
+   add_noise(pco2_sw_fdata, 6, 0.0, nx*ny)
+   print "%s Adding random noise to pco2/fco2 data (mean 0.0, stddev 6 uatm - Using Candyfloss data, value provided by J Shutler)" % (function)
+   #print "%s Adding random noise to pco2/fco2 data (mean 0.0, stddev 2.0 uatm - assuming using SOCAT flag A and flag B data)" % (function)
 
 #Ians rain noise test
 #if (random_noise_rain == 1):
@@ -2355,12 +2418,12 @@ if (pco2_data_selection != 0 and VERIFICATION_RUNS != True):
    #print "%s Using the SOCAT data " % (function)
    #if sstpco2_fdata[i] != missing_value:
    for i in arange(nx * ny):
-      if (isnan(sstpco2_fdata[i]) != True and sstpco2_fdata[i] > 0.0 ): 
+      if isnan(sstpco2_fdata[i]) != True:# and sstpco2_fdata[i] > 0.0 ): #SOCATv4_IGA
          if sstpco2_fdata[i] > 260:
            sstpco2_fdata[i] = sstpco2_fdata[i] - 273.15#IGA - If statement added because in-situ SST data may not be in K!
       
          if sstpco2_fdata[i] > 30.5 or sstpco2_fdata[i] < -1.8:
-            sstpco2_fdata[i] != missing_value
+            sstpco2_fdata[i] = missing_value
       else:
          sstpco2_fdata[i] = missing_value  
 
@@ -2381,11 +2444,17 @@ for i in arange(nx * ny):
       sstfndK_fdata[i] = missing_value
       sstskinK_fdata[i] = missing_value  
 
- # converting pressure data from Pascals to millibar
-if TAKAHASHI_DRIVER != True:
-   for i in arange(nx * ny):
-      if (pres_fdata[i] != missing_value):
-         pres_fdata[i] = pres_fdata[i] * 0.01
+# ---------------------------------------------------------------------------------------------------------------------------------------
+# -                                                                                                                                     -
+# converting pressure data from Pascals to millibar #IGA Need to formalise pressure data units - this converts from Pa.-------------START
+# if TAKAHASHI_DRIVER != True:
+#    for i in arange(nx * ny):
+#       if (pres_fdata[i] != missing_value):
+#          pres_fdata[i] = pres_fdata[i] * 0.01
+#    print "Converted pressure data to mbar from Pa"
+# ------------------------------------------------------IGA_SOCATv4 - Was removed as using pressure data in mbar.-------------END
+# -                                                                                                                                     -
+# ---------------------------------------------------------------------------------------------------------------------------------------
 
  #
  # calculations for components of the flux calculation
@@ -2443,7 +2512,7 @@ b11_fdata = array([missing_value] * nx*ny)
 d12_fdata = array([missing_value] * nx*ny)
 
  # always using XCO2 from 2000 for SOCAT data
-if pco2_data_selection != 0 and pco2_data_selection !=3:#IGA added and to account for in-situ data
+if pco2_data_selection == 1 or pco2_data_selection == 2 or pco2_data_selection == 45:
    pco2_increment_air = (year - 2000.0) * 1.5
    print "%s year: %d fCO2/pCO2_increment_air: %lf (uatm)" % (function, year, pco2_increment_air)
 else:
@@ -2451,9 +2520,9 @@ else:
    print "%s year: %d fCO2/pCO2_increment_air: %lf (uatm)" % (function, year, pco2_increment_air)
 
 for i in arange(nx * ny):
-   # if pco2_sw_fdata[i] != missing_value:
-   #    print 'salskin_fdata[i],sstskinK_fdata[i],pres_fdata[i],vco2_air_fdata[i],sstfndK_fdata[i],sstpco2_fdata[i],pco2_sw_fdata[i],sstskinK_fdata[i]',salskin_fdata[i],sstskinK_fdata[i],pres_fdata[i],vco2_air_fdata[i],sstfndK_fdata[i],sstpco2_fdata[i],pco2_sw_fdata[i],sstskinK_fdata[i]
+
    if ( (salskin_fdata[i] != missing_value) and (sstskinK_fdata[i] != missing_value) and (pres_fdata[i] != missing_value) and (vco2_air_fdata[i] != missing_value) and (sstfndK_fdata[i] != missing_value) and (sstpco2_fdata[i] != missing_value) and (pco2_sw_fdata[i] != missing_value) and (sstskinK_fdata[i] !=0.0) ):
+   #if ( (salskin_fdata[i] != missing_value) and (sstskinK_fdata[i] != missing_value) and (pres_fdata[i] != missing_value) and (vco2_air_fdata[i] != missing_value) and (sstfndK_fdata[i] != missing_value) and (pco2_sw_fdata[i] != missing_value) and (sstskinK_fdata[i] !=0.0) ):
       
       #print "1sstskinK_fdata: (%d,%d) %d %f log:%f\n" %(nx, ny,i,sstskinK_fdata[i]/100.0,log(sstskinK_fdata[i]/100.0))
       pH2O_fdata[i] = 1013.25 * exp(24.4543 - (67.4509 * (100.0/sstskinK_fdata[i])) - (4.8489 * log(sstskinK_fdata[i]/100.0)) - 0.000544 * salskin_fdata[i])
@@ -2470,15 +2539,16 @@ for i in arange(nx * ny):
      #pCO2_salinity_term = 1.0*(dSalinity/(sal_fdata[i] - salinity_rmse) )
       #else:
       # pCO2_salinity_term = 0.0
-
+      
        # correction to different years, correction is data and year specific.
        # note for 2010, correction for SOCAT isn't strictly required. However the contents of the exponential will collapse
        # to 1 (with some rounding error expected), so effectively no correction will be applied
       if GAS == 'CO2' and pco2_data_selection != 3:
           pco2_sw_cor_fdata[i] = pco2_increment + (pco2_sw_fdata[i] *exp( (0.0423*(sstfndC_fdata[i] - sstpco2_fdata[i])) - (0.0000435*((sstfndC_fdata[i]*sstfndC_fdata[i]) - (sstpco2_fdata[i]*sstpco2_fdata[i]) )) + pCO2_salinity_term) )
+          # if pco2_increment + (sstfndC_fdata[i] - sstpco2_fdata[i]) + ((sstfndC_fdata[i]*sstfndC_fdata[i]) - (sstpco2_fdata[i]*sstpco2_fdata[i]) ) >0:#SOCATv4
+          #   print pco2_increment, sstfndC_fdata[i] - sstpco2_fdata[i], ((sstfndC_fdata[i]*sstfndC_fdata[i]) - (sstpco2_fdata[i]*sstpco2_fdata[i]) )#SOCATv4
       else:
           pco2_sw_cor_fdata[i] = pco2_sw_fdata[i]
-       
       # following disables temp correction when using SOCAT data
       #if pco2_data_selection != 0:
           # check added for testing; only valid for 2010 data, otherwise test is meaningless
@@ -2497,7 +2567,7 @@ for i in arange(nx * ny):
           pco2_air_cor_fdata[i] = vco2_air_fdata[i]
 
        #pco2_data_selection ==2 signifies SOCAT fCO2 data, so converting pCO2_air_cor_fdata to fCO2_air_cor_fdata      
-      if pco2_data_selection == 2:
+      if pco2_data_selection == 2 or pco2_data_selection == 4 or pco2_data_selection == 45:
          # conversion of pCO2 to fCO2 from McGillis and Wanninkhof 2006, Marine chemistry with correction from Weiss 1974 (as the equation in 2006 paper has a set of brackets missing)
          b11_fdata[i] = -1636.75 + (12.0408*sstskinK_fdata[i]) - (0.0327957*sstskinK_fdata[i]*sstskinK_fdata[i]) + (3.16528e-5 * sstskinK_fdata[i]*sstskinK_fdata[i]*sstskinK_fdata[i])
          d12_fdata[i] = 57.7 - (0.118*sstskinK_fdata[i])
@@ -2506,12 +2576,15 @@ for i in arange(nx * ny):
           # 1/0.987 = 1.0131712 - conversion between bar and atm, so *1013.25 is the conversion from millibar to atm.
           # the combination of the B11 and d12 terms are in cm^3/mol and so these cancel with the P/RT term (in mol/cm^3) so the whole of the exp term is dimensionless
          pco2_air_cor_fdata[i] = pco2_air_cor_fdata[i] * exp((b11_fdata[i] + (2*d12_fdata[i]) ) * 1e-6 * ((pres_fdata[i] * 1013.25)/(R*sstskinK_fdata[i]) ))
+         #pco2_air_cor_fdata[i] = pco2_air_cor_fdata[i] * exp((b11_fdata[i] + (2*d12_fdata[i]) ) * ((pres_fdata[i] / 1013.25)/(R*sstskinK_fdata[i]) ))
+         #print exp((b11_fdata[i] + (2*d12_fdata[i]) ) * 1e-6 * ((pres_fdata[i] * 1013.25)/(R*sstskinK_fdata[i]) ))
+         #print pres_fdata[i]
       
       #((vco2_air_fdata[i] * (pres_fdata[i] - pH2O_fdata[i]))*0.001) + (pco2_increment)
       
        #>>> V=373.769989/1e6
        #>>> pco2a = 374.220001*1e-6*1013.25
-
+      
       if TAKAHASHI_DRIVER:           
          if pco2_air_fdata[i] != missing_value:
          
@@ -2589,7 +2662,8 @@ elif (k_parameterisation == 2):
     # determine the Nightingale et al 2000 k relationship
    for i in arange(nx * ny):   
       k_fdata[i] = missing_value
-      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      #if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):#SOCATv4 - No need for wind moment3
          k_fdata[i] = 0.222 * windu10_moment2_fdata[i] + (0.333 * windu10_fdata[i])  
          k_fdata[i] = k_fdata[i] * sqrt(600.0/scskin_fdata[i])
           
@@ -2612,7 +2686,8 @@ elif (k_parameterisation == 4):
     # determine the Wanninkhof 1992 k relationship
    for i in arange(nx * ny):   
       k_fdata[i] = missing_value
-      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      #if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):#SOCATv4 - no need for wind moment 3
          k_fdata[i] = 0.31 * windu10_moment2_fdata[i]    
          k_fdata[i] = k_fdata[i] * sqrt(660.0/scskin_fdata[i])
           
@@ -2687,7 +2762,8 @@ elif (k_parameterisation == 9):
    
    for i in arange(nx * ny):   
       k_fdata[i] = missing_value
-      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      #if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
           # general form kw = (600/Sc)0.5 [a0 + a1*U + a2*U2 + a3*U3]
          k_fdata[i] = k_generic_a0 + (k_generic_a1 * windu10_fdata[i]) +  (k_generic_a2 * windu10_moment2_fdata[i]) + (k_generic_a3 * windu10_moment3_fdata[i])
          k_fdata[i] = k_fdata[i] * sqrt((k_generic_sc/scskin_fdata[i]))
@@ -2734,12 +2810,14 @@ elif (k_parameterisation == 12):
     # determine the k relationship
    for i in arange(nx * ny):   
       k_fdata[i] = missing_value
-      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      #if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (windu10_moment3_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):
+      if ( (windu10_fdata[i] != missing_value) and (windu10_moment2_fdata[i] != missing_value) and (scskin_fdata[i] != missing_value) and (scskin_fdata[i] > 0.0) ):#SOCATv4 - no need for wind moment 3
          k_fdata[i] = 0.251 * windu10_moment2_fdata[i]
          k_fdata[i] = k_fdata[i] * sqrt(660.0/scskin_fdata[i])
           
          k_fdata[i] = k_fdata[i]# /36.0 # conversion from cm/h to 10^-4 m/s (100/3600) = 1/36
       else:
+         #print 'kdata W92_missing value'
          k_fdata[i] = missing_value
     # resetting OceanFlux bubble and direct components to missing_values as not needed
    kb_fdata[:] = missing_value
@@ -2889,11 +2967,13 @@ if ((kb_asymmetry != 1.0) and (k_parameterisation == 3)):
 for i in arange(nx * ny):   
    FH06_fdata[i] = missing_value
   
+   if i==6482:
+        print "i",i,"solfnd",solfnd_fdata[i],"k",k_fdata[i],"pco2sw",pco2_sw_cor_fdata[i],"pco2_air",pco2_air_cor_fdata[i]
    if ( (solfnd_fdata[i] != missing_value) and (k_fdata[i] != missing_value) and (pco2_sw_cor_fdata[i] != missing_value) and (pco2_air_cor_fdata[i] != missing_value) ):
        # original
       #flux_H06[i] = (k_H06[i] * 36.0 * 24.0 * pow(10.0,-2)) * (solubility_data[i]* (12.0/1000.0)) * DpCO2_cor_data[i]
        # expanded
-      
+    
       # mass boundary layer concentration (ie concentration in the water)
       concw_fdata[i] = ((solfnd_fdata[i] * conc_factor) * pco2_sw_cor_fdata[i])
       
@@ -3024,6 +3104,7 @@ for i in arange(nx * ny):
   # this dataset is filled with missing_values prior to output, otherwise non-socat data will appear in the SFUG field in the netcdf
   # which will confuse the user
   # enabled for TAKAHASHI_DRIVER to enable checking
+
 if TAKAHASHI_DRIVER != True:
    if (pco2_data_selection == 0):
       pco2_sw_fdata = array([missing_value] * nx*ny)
@@ -3221,7 +3302,6 @@ else:
 
  # need to always have this process attribute layer as its part of the internal quality check
 failed_quality_fdata.shape = (nx, ny)
-
  # ice data
 ice_fdata.shape = (nx, ny)
  # write out the final ouput to netcdf
