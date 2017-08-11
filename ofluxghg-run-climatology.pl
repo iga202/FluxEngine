@@ -447,13 +447,13 @@ if (!($OUTPUT_DIR = $config->output_dir)){
 
 
  # adding in home directory to each path
-$WINDU10 = $home_dir."/".$WINDU10;
+#$WINDU10 = $home_dir."/".$WINDU10;
 $SSTSKIN = $home_dir."/".$SSTSKIN;
 $SSTFND = $home_dir."/".$SSTFND;
 $SIGMA0 = $home_dir."/".$SIGMA0;
 $SIG_WV_HT = $home_dir."/".$SIG_WV_HT;
 $PRESSURE = $home_dir."/".$PRESSURE;
-$ICE = $home_dir."/".$ICE;
+#$ICE = $home_dir."/".$ICE;
 
 
 
@@ -778,7 +778,15 @@ elsif ($PCO2_DATA_SELECTION eq "socat_fco2"){
    $pco2_data_selection = 2;
    print "\n($prog, $func) Using SOCAT climatological fco2 data (with lat grid -90 to +90 degrees).";
    }
-  elsif ($PCO2_DATA_SELECTION eq "insitu_pco2"){
+elsif ($PCO2_DATA_SELECTION eq "SOCAT_v4"){
+   $pco2_data_selection = 4;
+   print "\n($prog, $func) Using SOCATV4 data - a time-series, ot climatology.";
+   } 
+elsif ($PCO2_DATA_SELECTION eq "SOCAT_v4_clim"){
+   $pco2_data_selection = 45;
+   print "\n($prog, $func) Using SOCATV4 data - LGM climatology.";
+   } 
+elsif ($PCO2_DATA_SELECTION eq "insitu_pco2"){
    $pco2_data_selection = 3;
    print "\n($prog, $func) Using insitu pco2 data (with lat grid -90 to +90 degrees).";
    } 
@@ -802,14 +810,13 @@ for (my $y=$year_start; $y<=$year_end; $y++){
     
        # create input filenames
        # year specific datasets
-      my $windu10_file = $WINDU10."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-WSP-???-1M-*-*.nc";
+      my $windu10_file = $WINDU10."/".$year."/".$year.sprintf("%02d", $i)."*OCF-???-???-1M-*.nc";#IGA - added
       my @file_glob = glob("$windu10_file");
       if (scalar(@file_glob) != 1){
          die "($prog, $func) More than one file or no file found in glob - arctic or global - ($windu10_file), exiting.";
       } else {
          $windu10_file = $file_glob[0];
       }
-      
       
       my $ice_file = $ICE."/".$year."/".$year.sprintf("%02d", $i)."*_???-ICE-???-1M-*-*.nc";#IGA changed to accomodate CERSAT (which is stored on Pathfinders data repository and therefore OCF is changed to POA)
       @file_glob = glob("$ice_file");
@@ -819,7 +826,7 @@ for (my $y=$year_start; $y<=$year_end; $y++){
          $ice_file = $file_glob[0];
       }
       
-      my $sstskin_file = $SSTSKIN."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-SST-???-1M-*-*.nc";
+      my $sstskin_file = $SSTSKIN."/".$year."/".$year.sprintf("%02d", $i)."*OCF-???-???-1M-*.nc";
       @file_glob = glob("$sstskin_file");
       if (scalar(@file_glob) != 1){
          die "($prog, $func) More than one file or no file found in glob ($sstskin_file), exiting.";
@@ -839,8 +846,8 @@ for (my $y=$year_start; $y<=$year_end; $y++){
       }
       
       my $sstfnd_file;
-      if ($use_sstfnd == 1){
-         $sstfnd_file = $SSTFND."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-SST-???-1M-*-*.nc";
+      if ($use_sstfnd > -1){#SOCATv4 - changed but should have no effect as never used
+         $sstfnd_file = $SSTFND."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-???-???-1M-*.nc";
          @file_glob = glob("$sstfnd_file");
          if (scalar(@file_glob) != 1){
             die "($prog, $func) More than one file or no file found in glob ($sstfnd_file), exiting.";
@@ -880,14 +887,21 @@ for (my $y=$year_start; $y<=$year_end; $y++){
       # } else {
       #    $pressure_file = $file_glob[0]; 
       # }
-      my $pressure_file = $PRESSURE."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-PRE-???-1M-*-*.nc";
+      # my $pressure_file = $PRESSURE."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-PRE-???-1M-*-*.nc";
+      # @file_glob = glob("$pressure_file");
+      # if (scalar(@file_glob) != 1){
+      #    die "($prog, $func) More than one file or no file found in glob ($pressure_file), exiting.";
+      # } else {
+      #    $pressure_file = $file_glob[0];
+      # } 
+      my $pressure_file = $PRESSURE."/".$year."/".$year.sprintf("%02d", $i)."*OCF-???-???-1M-*.nc";
       @file_glob = glob("$pressure_file");
       if (scalar(@file_glob) != 1){
          die "($prog, $func) More than one file or no file found in glob ($pressure_file), exiting.";
       } else {
          $pressure_file = $file_glob[0];
       } 
-      
+
        # salinity options
        # either Takahashi climatology salinity or SMOS
       my $salinity_file ="null";
@@ -903,7 +917,7 @@ for (my $y=$year_start; $y<=$year_end; $y++){
          }   
       } elsif ($SALINITY_DATA_SELECTION eq "smos"){
          $salinity_data_selection = 1;
-         $salinity_file = $SALINITY."/".$year."/".$year.sprintf("%02d", $i)."*_POA-SSS-???-1M-*-*.nc";
+         $salinity_file = $SALINITY."/".$year."/".$year.sprintf("%02d", $i)."*???-???-???-1M-*.nc";
          @file_glob = glob("$salinity_file");
          if (scalar(@file_glob) != 1){
             die "($prog, $func) More than one file or no file found in glob ($salinity_file), exiting.";
@@ -934,7 +948,8 @@ for (my $y=$year_start; $y<=$year_end; $y++){
       my $rain_data_selection = -1;
       if ($RAIN_DATA_SELECTION eq "gpcp"){
          $rain_data_selection = 1;
-         $rain_file = $RAIN."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-RAIN-???-1M-*-*.nc";
+         #$rain_file = $RAIN."/".$year."/".$year.sprintf("%02d", $i)."*_OCF-RAIN-???-1M-*-*.nc";
+         $rain_file = $RAIN."/2011/2011".sprintf("%02d", $i)."*_OCF-RAIN-???-1M-*-*.nc";
          @file_glob = glob("$rain_file");
          if (scalar(@file_glob) != 1){
             die "($prog, $func) More than one file or no file found in glob ($rain_file), exiting.";
@@ -969,19 +984,29 @@ for (my $y=$year_start; $y<=$year_end; $y++){
          } else {
             $pco2_file = $file_glob[0];
          }
-      
-      } elsif (($pco2_data_selection == 1) or ($pco2_data_selection == 2)){
+      } elsif (($pco2_data_selection == 1) or ($pco2_data_selection == 2) or ($pco2_data_selection == 45)){
           # SOCAT data
           # note SOCAT data are currently in a user space, so the next line is commented out
           #$PCO2 = $home_dir."/".$PCO2;
-         $pco2_file = $PCO2."/*".sprintf("%02d", $i)."01_OCF-CO2-???-1M-*-*.nc";
+         $pco2_file = $PCO2."/2010".sprintf("%02d", $i)."01_OCF-CO2-???-1M-*.nc";
          @file_glob = glob("$pco2_file");
          if (scalar(@file_glob) != 1){
             die "($prog, $func) More than one file or no file found in glob ($pco2_file), exiting.";
          } else {
             $pco2_file = $file_glob[0];
          }
-      } elsif ($pco2_data_selection == 3){
+      } elsif ($pco2_data_selection == 4) {
+          # SOCAT data
+          # note SOCAT data are currently in a user space, so the next line is commented out
+          #$PCO2 = $home_dir."/".$PCO2;
+         $pco2_file = $PCO2."/".$year."/".$year.sprintf("%02d", $i)."01_OCF-CO2-???-1M-*.nc";#IGA_SOCATV4 - altered for time-series SOCAT data. 
+         @file_glob = glob("$pco2_file");
+         if (scalar(@file_glob) != 1){
+            die "($prog, $func) More than one file or no file found in glob ($pco2_file), exiting.";
+         } else {
+            $pco2_file = $file_glob[0];
+         }
+      } elsif ($pco2_data_selection == 3) {
           # In-situ data
          $pco2_file = $PCO2;
          @file_glob = glob("$pco2_file*");
@@ -1028,7 +1053,7 @@ for (my $y=$year_start; $y<=$year_end; $y++){
        
        # creat the command to run       
       
-      my $command = $home_dir."/".$SRC_HOME."/ofluxghg-flux-calc.py"." $sstskin_file $sstfnd_file $windu10_file $pressure_file $pco2_file $salinity_file $sigma0_file $sig_wv_ht_file $rain_file $bio_file $bio_file $ice_file $ATLANTIC_OCEAN $PACIFIC_OCEAN $SOUTHERN_OCEAN $INDIAN_OCEAN $LONGHURST $sstgrad_file $final_output_dir/$out_file $SSTSKIN_PROD_NAME $SSTFND_PROD_NAME $WINDU10_PROD_NAME $SIGMA0_PROD_NAME $SIG_WV_HT_PROD_NAME $ICE_PROD_NAME $PCO2_PROD_NAME $PCO2_SST_PROD_NAME $VCO2_PROD_NAME msl_mean $SALINITY_PROD_NAME $RAIN_PROD_NAME chlor_a Rrs_555 sea-mask sea-mask gradient_fields $year $random_noise_windu10_switch $random_noise_sstskin_switch $random_noise_sstfnd_switch $random_noise_pco2_switch $bias_windu10_switch $bias_sstskin_switch $bias_sstfnd_switch $bias_pco2_switch $bias_k_switch $BIAS_WINDU10_VALUE $BIAS_SSTSKIN_VALUE $BIAS_SSTFND_VALUE $BIAS_PCO2_VALUE $BIAS_K_VALUE $bias_k_percent_switch $BIAS_K_BIOLOGY_VALUE $BIAS_K_WIND_VALUE $pco2_data_selection $salinity_data_selection $rain_data_selection $k_parameterisation $K_GENERIC_SC $K_GENERIC_A0 $K_GENERIC_A1 $K_GENERIC_A2 $K_GENERIC_A3 $KD_WEIGHTING $KB_WEIGHTING $KB_ASYMMETRY $rain_sst_switch $BIAS_SSTSKIN_DUE_RAIN_VALUE $BIAS_SSTSKIN_DUE_RAIN_INTENSITY $BIAS_SSTSKIN_DUE_RAIN_WIND $rain_wet_deposition_switch $k_rain_linear_ho1997_switch $k_rain_nonlinear_h2012_switch $flux_model $sst_gradients $use_sstskin $use_sstfnd $SALINE_SKIN_VALUE $process_layers_off $config_file $hostname $processing_time";
+      my $command = $home_dir."/".$SRC_HOME."/ofluxghg-flux-calc.py"." $sstskin_file $sstfnd_file $windu10_file $pressure_file $pco2_file $salinity_file $sigma0_file $sig_wv_ht_file $rain_file $bio_file $bio_file $ice_file $ATLANTIC_OCEAN $PACIFIC_OCEAN $SOUTHERN_OCEAN $INDIAN_OCEAN $LONGHURST $sstgrad_file $final_output_dir/$out_file $SSTSKIN_PROD_NAME $SSTFND_PROD_NAME $WINDU10_PROD_NAME $SIGMA0_PROD_NAME $SIG_WV_HT_PROD_NAME $ICE_PROD_NAME $PCO2_PROD_NAME $PCO2_SST_PROD_NAME $VCO2_PROD_NAME pres $SALINITY_PROD_NAME $RAIN_PROD_NAME chlor_a Rrs_555 sea-mask sea-mask gradient_fields $year $random_noise_windu10_switch $random_noise_sstskin_switch $random_noise_sstfnd_switch $random_noise_pco2_switch $bias_windu10_switch $bias_sstskin_switch $bias_sstfnd_switch $bias_pco2_switch $bias_k_switch $BIAS_WINDU10_VALUE $BIAS_SSTSKIN_VALUE $BIAS_SSTFND_VALUE $BIAS_PCO2_VALUE $BIAS_K_VALUE $bias_k_percent_switch $BIAS_K_BIOLOGY_VALUE $BIAS_K_WIND_VALUE $pco2_data_selection $salinity_data_selection $rain_data_selection $k_parameterisation $K_GENERIC_SC $K_GENERIC_A0 $K_GENERIC_A1 $K_GENERIC_A2 $K_GENERIC_A3 $KD_WEIGHTING $KB_WEIGHTING $KB_ASYMMETRY $rain_sst_switch $BIAS_SSTSKIN_DUE_RAIN_VALUE $BIAS_SSTSKIN_DUE_RAIN_INTENSITY $BIAS_SSTSKIN_DUE_RAIN_WIND $rain_wet_deposition_switch $k_rain_linear_ho1997_switch $k_rain_nonlinear_h2012_switch $flux_model $sst_gradients $use_sstskin $use_sstfnd $SALINE_SKIN_VALUE $process_layers_off $config_file $hostname $processing_time";
       print "Command dir: $command\n";
       print "END COMMAND--------\n";
       if ($debug == 1){
